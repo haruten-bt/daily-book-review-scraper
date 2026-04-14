@@ -1,0 +1,65 @@
+name: 毎日書評 自動収集
+
+on:
+  schedule:
+    # 毎日 9:00 JST = 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      full_mode:
+        description: "全件取得モード（初回セットアップ時に使用）"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+
+jobs:
+  scrape-and-aggregate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Python環境セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: Stage1 - 記事スクレイプ
+        run: |
+          if [ "${{ github.event.inputs.full_mode }}" = "true" ]; then
+            echo "全件取得モードで実行します"
+            python scraper.py --full
+          else
+            python scraper.py
+          fi
+
+      - name: Stage2 - 週まとめ生成
+        run: python aggregator.py
+
+      - name: 変更をコミット＆プッシュ
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add articles/ weekly/ state.json
+          if git diff --cached --quiet; then
+            echo "変更なし。コミットをスキップします。"
+          else
+            DATE=$(date -u '+%Y-%m-%d' --date='TZ="Asia/Tokyo"' 2>/dev/null || date -u '+%Y-%m-%d')
+            git commit -m "[bot] 毎日書評更新 ${DATE}"
+            git push
+            echo "コミット＆プッシュ完了"
+          fi
